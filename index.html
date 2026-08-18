@@ -54,6 +54,11 @@
   .pc-acts { padding:8px 16px 12px; display:flex; gap:8px; flex-wrap:wrap; border-top:1px solid #f3f4f6; }
   .pc-arq-sec { margin-top:20px; }
   .pc-arq-toggle { background:none; border:none; color:var(--muted); font-size:.8rem; cursor:pointer; padding:4px 0; text-decoration:underline; }
+  .aud-cand { border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; margin-bottom:10px; background:#f9fafb; }
+  .aud-cand-proc { font-size:.72rem; color:var(--muted); margin-bottom:2px; }
+  .aud-cand-caso { font-size:.9rem; font-weight:700; color:var(--navy-dark); margin-bottom:4px; }
+  .aud-cand-desc { font-size:.78rem; color:#555; margin-bottom:10px; font-style:italic; }
+  .aud-cand select { width:100%; padding:7px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:.83rem; background:#fff; cursor:pointer; }
 
   /* HEADER */
   .hdr { background: var(--navy-dark); color: #fff; padding: 16px 20px 0; }
@@ -232,8 +237,8 @@
       <h2>Monitor de Prazos TF</h2>
     </div>
     <div class="fg">
-      <label>Usuário</label>
-      <input id="l-user" type="text" value="tfs" readonly style="background:#f5f5f5;color:#888;cursor:default"/>
+      <label>E-mail</label>
+      <input id="l-email" type="email" placeholder="seu@email.com" onkeydown="if(event.key==='Enter')window.doLogin()"/>
     </div>
     <div class="fg">
       <label>Senha</label>
@@ -259,9 +264,10 @@
         <div class="sync-dot" id="sync-dot"></div>
         <span class="sync-label" id="sync-label">Conectando…</span>
       </div>
-      <button class="btn-cfg" onclick="window.openSettings()">⚙</button>
+      <div id="hdr-user" style="display:flex;align-items:center;gap:6px"></div>
+      <button class="btn-cfg edit-only" onclick="window.openSettings()">⚙</button>
       <button class="btn-logout" onclick="window.doLogout()">Sair</button>
-      <div style="position:relative">
+      <div style="position:relative" class="edit-only">
         <button class="btn-new" onclick="window.toggleTipoPicker(event)">+ Novo Prazo</button>
         <div class="tipo-picker" id="tipo-picker">
           <div class="tipo-opt" onclick="window.openNew('judicial')">Judicial</div>
@@ -360,8 +366,9 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app-check.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp, getDoc, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
+import { initializeApp as initializeAppSecondary } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp, getDoc, setDoc, writeBatch, getDocs } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
 
 // ── Firebase ──────────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -384,15 +391,30 @@ const col       = collection(db, 'prazos');
 const colPautas = collection(db, 'audiencias');
 
 // ── State ─────────────────────────────────────────────────────────────────
-let items       = [];
-let pautas      = [];
-let editId      = null;
-let editPautaId = null;
-let actPautaId  = null;
-let tab         = 'hoje';
-let filterUrg   = null;
-let filterTipo  = null;
+let items        = [];
+let pautas       = [];
+let editId       = null;
+let editPautaId  = null;
+let actPautaId   = null;
+let tab          = 'hoje';
+let filterUrg    = null;
+let filterTipo   = null;
 let showArqPauta = false;
+let currentUser  = null;   // Firebase Auth user
+let userProfile  = null;   // { nome, role } from Firestore users/{uid}
+let allUserProfiles = [];  // lista de todos os usuários (só visível para admin)
+
+// ── Helpers de permissão ──────────────────────────────────────────────────
+const isAdmin    = () => userProfile?.role === 'admin';
+const isCoord    = () => userProfile?.role === 'coordenadora';
+const canEdit    = () => isAdmin() || isCoord();
+const userNome   = () => userProfile?.nome || currentUser?.email || '';
+// Filtra itens conforme o papel do usuário logado
+function applyRoleFilter(list) {
+  if (isAdmin() || isCoord()) return list; // veem tudo
+  const nome = userNome().trim().toLowerCase();
+  return list.filter(i => (i.adv||'').trim().toLowerCase() === nome);
+}
 
 // ── Config ────────────────────────────────────────────────────────────────
 const defaultCfg = {
@@ -459,8 +481,24 @@ async function fsDel(id)       { return deleteDoc(doc(db,'prazos',id)); }
 let unsubscribeSnapshot = null;
 let unsubscribeConfig   = null;
 
-onAuthStateChanged(auth, user => {
+onAuthStateChanged(auth, async user => {
   if (user) {
+    currentUser = user;
+    // Carregar perfil do usuário
+    const profSnap = await getDoc(doc(db,'users',user.uid));
+    if (profSnap.exists()) {
+      userProfile = profSnap.data();
+    } else if (user.email === 'tfs@monitor.local') {
+      // Auto-cria perfil admin para a conta legada
+      userProfile = { nome: 'TFS', role: 'admin' };
+      await setDoc(doc(db,'users',user.uid), userProfile);
+    } else {
+      // Usuário sem perfil configurado
+      await signOut(auth);
+      document.getElementById('login-err').textContent = 'Conta não configurada. Contate o administrador.';
+      return;
+    }
+    updateHeaderUser();
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.add('visible');
     unsubscribeConfig = onSnapshot(doc(db,'config','prazos'), snap => {
@@ -487,44 +525,52 @@ onAuthStateChanged(auth, user => {
     if (unsubscribeSnapshot) { unsubscribeSnapshot(); unsubscribeSnapshot = null; }
     if (unsubscribeConfig)   { unsubscribeConfig();   unsubscribeConfig   = null; }
     cfg = {...defaultCfg};
-    items = [];
-    pautas = [];
+    items = []; pautas = [];
+    currentUser = null; userProfile = null; allUserProfiles = [];
+    document.getElementById('l-email').value = '';
+    document.getElementById('l-pass').value  = '';
   }
 });
 
 window.doLogin = async function() {
-  const pass = document.getElementById('l-pass').value;
+  const email = document.getElementById('l-email').value.trim();
+  const pass  = document.getElementById('l-pass').value;
   const errEl = document.getElementById('login-err');
   const btn   = document.querySelector('.btn-login');
-  if (!pass) { errEl.textContent = 'Digite a senha.'; return; }
-  btn.disabled = true;
-  btn.textContent = 'Entrando…';
-  errEl.textContent = '';
+  if (!email || !pass) { errEl.textContent = 'Preencha e-mail e senha.'; return; }
+  btn.disabled = true; btn.textContent = 'Entrando…'; errEl.textContent = '';
   try {
-    await signInWithEmailAndPassword(auth, 'tfs@monitor.local', pass);
+    await signInWithEmailAndPassword(auth, email, pass);
   } catch(e) {
-    errEl.textContent = 'Senha incorreta.';
-    btn.disabled = false;
-    btn.textContent = 'Entrar';
+    errEl.textContent = 'E-mail ou senha incorretos.';
+    btn.disabled = false; btn.textContent = 'Entrar';
   }
 };
 
-window.doLogout = async function() {
-  await signOut(auth);
-  document.getElementById('l-pass').value = '';
-};
+window.doLogout = async function() { await signOut(auth); };
+
+function updateHeaderUser() {
+  const roleLabel = { admin:'Admin', coordenadora:'Coord.', advogado:'Advogado', estagiario:'Estagiário' };
+  const nome = userNome();
+  let el = document.getElementById('hdr-user');
+  if (!el) return;
+  el.innerHTML = `<span style="font-size:.78rem;color:rgba(255,255,255,.6)">${esc(nome)}</span>
+    <span style="background:var(--teal);color:var(--navy-dark);border-radius:10px;padding:1px 7px;font-size:.65rem;font-weight:800">${roleLabel[userProfile?.role]||''}</span>`;
+  // Mostrar/esconder controles de edição
+  document.querySelectorAll('.edit-only').forEach(el => el.style.display = canEdit() ? '' : 'none');
+}
 
 // ── Render ────────────────────────────────────────────────────────────────
 function render() {
   const t    = today();
   const isArq      = i => i.status==='PROTOCOLADO'||i.status==='Sem Ação';
   const isPendente = i => i.status==='pendente';
-  const open = items.filter(i=>!isArq(i)&&!isPendente(i));
-  const pend = items.filter(isPendente);
-  const arq  = items.filter(i=>isArq(i));
+  const visibleItems = applyRoleFilter(items); // aplica filtro de papel
+  const open = visibleItems.filter(i=>!isArq(i)&&!isPendente(i));
+  const arq  = visibleItems.filter(i=>isArq(i));
+  const pend = (isAdmin()||isCoord()) ? visibleItems.filter(isPendente) : [];
   const hoje = open.filter(i=>i.prazoTF&&parseD(i.prazoTF)<=t).sort((a,b)=>urgOrd(urgencia(a))-urgOrd(urgencia(b)));
   const todos= [...open].sort((a,b)=>{const d=urgOrd(urgencia(a))-urgOrd(urgencia(b));return d||((a.prazoTF||'').localeCompare(b.prazoTF||''));});
-
   const pautasAtivas = pautas.filter(p=>p.status==='agendada'||p.status==='adiada');
   document.getElementById('cnt-hoje').textContent =hoje.length;
   document.getElementById('cnt-todos').textContent=open.length;
@@ -607,13 +653,13 @@ function renderCard(item,acts,arch){
       ${item.prov?`<b>Providência:</b> ${esc(item.prov)}`:''}
     </div>`:'';
   let actHTML='';
-  if(acts&&!arch){
+  if(acts&&!arch&&canEdit()){
     actHTML=`<div class="card-act">
       <button class="btn btn-act"  onclick="openAct('${item.id}')">Registrar Ação</button>
       <button class="btn btn-edit" onclick="openEdit('${item.id}')">✏ Editar</button>
       <button class="btn btn-prot" onclick="protocolar('${item.id}')">✓ Protocolar</button>
     </div>`;
-  } else if(arch){
+  } else if(arch&&canEdit()){
     actHTML=`<div class="card-act">
       <button class="btn btn-reo" onclick="reabrir('${item.id}')">↩ Reabrir</button>
       <button class="btn btn-del" onclick="excluir('${item.id}')">🗑 Excluir</button>
@@ -1057,6 +1103,12 @@ window.openSettings = function() {
   g('cfg-adm-lim-15').value   = cfg.adm_lim_15;
   g('cfg-adm-lim-30').value   = cfg.adm_lim_30;
   g('cfg-adm-lim-60').value   = cfg.adm_lim_60;
+  if (isAdmin()) {
+    document.getElementById('cfg-users-sec').style.display = '';
+    loadAdminUsers();
+  } else {
+    document.getElementById('cfg-users-sec').style.display = 'none';
+  }
   openOverlay('ovl-cfg');
 };
 
@@ -1101,18 +1153,99 @@ window.saveSettings = async function() {
   }
 };
 
+// ── Admin: Gerenciamento de Usuários ──────────────────────────────────────
+let _secondaryApp = null;
+function getSecondaryApp() {
+  if (!_secondaryApp) _secondaryApp = initializeAppSecondary(firebaseConfig, 'admin-helper');
+  return _secondaryApp;
+}
+
+async function loadAdminUsers() {
+  const snap = await getDocs(collection(db, 'users'));
+  allUserProfiles = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+  renderUserList();
+}
+
+function renderUserList() {
+  const roleLabel = { admin:'Admin', coordenadora:'Coordenadora', advogado:'Advogado', estagiario:'Estagiário' };
+  const el = document.getElementById('cfg-user-list');
+  if (!el) return;
+  if (!allUserProfiles.length) {
+    el.innerHTML = '<p style="color:#999;font-size:.82rem;margin:0">Nenhum usuário cadastrado.</p>';
+    return;
+  }
+  el.innerHTML = allUserProfiles.map(u => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #e8e8e8">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.nome||'—')}</div>
+        <div style="font-size:.73rem;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.email||u.uid)}</div>
+      </div>
+      <select style="font-size:.78rem;border:1px solid #ccc;border-radius:6px;padding:4px 8px;flex-shrink:0"
+              onchange="window.alterarRole('${u.uid}',this.value)">
+        ${['admin','coordenadora','advogado','estagiario'].map(r=>`<option value="${r}"${u.role===r?' selected':''}>${roleLabel[r]}</option>`).join('')}
+      </select>
+      <button class="btn btn-del" style="font-size:.73rem;padding:4px 10px;flex-shrink:0"
+              onclick="window.excluirUsuario('${u.uid}','${esc(u.nome||u.uid)}')">🗑</button>
+    </div>`).join('');
+}
+
+window.criarUsuario = async function() {
+  const email = document.getElementById('nu-email').value.trim();
+  const senha  = document.getElementById('nu-senha').value;
+  const nome   = document.getElementById('nu-nome').value.trim();
+  const role   = document.getElementById('nu-role').value;
+  const errEl  = document.getElementById('nu-err');
+  const btn    = document.getElementById('btn-criar-user');
+  errEl.textContent = '';
+  if (!email || !senha || !nome) { errEl.textContent = 'Preencha todos os campos.'; return; }
+  if (senha.length < 6) { errEl.textContent = 'Senha deve ter ao menos 6 caracteres.'; return; }
+  btn.disabled = true; btn.textContent = 'Criando…';
+  try {
+    const authSec = getAuth(getSecondaryApp());
+    const cred = await createUserWithEmailAndPassword(authSec, email, senha);
+    await signOut(authSec);
+    await setDoc(doc(db, 'users', cred.user.uid), { nome, role, email });
+    document.getElementById('nu-email').value = '';
+    document.getElementById('nu-senha').value = '';
+    document.getElementById('nu-nome').value  = '';
+    await loadAdminUsers();
+  } catch(e) {
+    errEl.textContent = e.code === 'auth/email-already-in-use'
+      ? 'E-mail já cadastrado.'
+      : e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Criar Usuário';
+  }
+};
+
+window.alterarRole = async function(uid, role) {
+  try { await updateDoc(doc(db, 'users', uid), { role }); }
+  catch(e) { alert('Erro ao alterar papel: ' + e.message); }
+};
+
+window.excluirUsuario = async function(uid, nome) {
+  if (uid === currentUser?.uid) { alert('Não é possível excluir a própria conta.'); return; }
+  if (!confirm(`Remover acesso de "${nome}"?\nO usuário não conseguirá mais entrar no sistema.`)) return;
+  try {
+    await deleteDoc(doc(db, 'users', uid));
+    await loadAdminUsers();
+  } catch(e) { alert('Erro ao remover usuário: ' + e.message); }
+};
+
 // ── Pendentes (ALERTE) ─────────────────────────────────────────────────────
 function renderPendentes(list) {
-  const bar = `<div class="pend-bar">
-    <p>📋 ${list.length} processo(s) aguardando revisão — importados do ALERTE.</p>
+  const editBtns = canEdit() ? `
     <div style="display:flex;gap:8px;flex-shrink:0">
       <button class="btn-import" onclick="window.importarAlerte()">📥 Importar planilha ALERTE</button>
       <button class="btn-import" style="background:#6b7280" onclick="window.limparPendentes()">🗑 Limpar todos</button>
-    </div>
+    </div>` : '';
+  const bar = `<div class="pend-bar">
+    <p>📋 ${list.length} processo(s) aguardando revisão — importados do ALERTE.</p>
+    ${editBtns}
   </div>`;
   if (!list.length) return `<div class="pend-bar" style="flex-direction:column;align-items:flex-start;gap:8px">
-    <p style="margin:0">Nenhum processo pendente. Importe uma planilha ALERTE para começar a revisão.</p>
-    <button class="btn-import" onclick="window.importarAlerte()">📥 Importar planilha ALERTE</button>
+    <p style="margin:0">Nenhum processo pendente.${canEdit() ? ' Importe uma planilha ALERTE para começar a revisão.' : ''}</p>
+    ${canEdit() ? '<button class="btn-import" onclick="window.importarAlerte()">📥 Importar planilha ALERTE</button>' : ''}
   </div>`;
   return bar + list.map(i => {
     const fatCls = dcls(i.fatal);
@@ -1135,10 +1268,10 @@ function renderPendentes(list) {
       </div>
       ${i.prov?`<div class="card-desc"><b>Providência:</b> ${esc(i.prov)}</div>`:''}
       ${i.desc?`<div class="card-desc" style="font-size:.73rem;color:#aaa;border-top:none;padding-top:0"><b>Desc:</b> ${esc(i.desc.substring(0,200))}${i.desc.length>200?'…':''}</div>`:''}
-      <div class="card-act">
+      ${canEdit()?`<div class="card-act">
         <button class="btn btn-rev" onclick="revisarPendente('${i.id}')">✏ Revisar e Confirmar</button>
         <button class="btn btn-del" onclick="descartarPendente('${i.id}')">🗑 Descartar</button>
-      </div>
+      </div>`:''}
     </div>`;
   }).join('');
 }
@@ -1227,59 +1360,96 @@ document.getElementById('xlsx-input').addEventListener('change', async function(
   const dataRows = rows.slice(headerIdx + 1).filter(r => r && r[iProc]);
   if (!dataRows.length) { alert('Nenhuma linha de dados encontrada.'); e.target.value=''; return; }
 
-  // Chave composta proc+cien+fatal para evitar reimportar a mesma publicação
-  const existingKeys = new Set(items.map(i=>`${(i.proc||'').trim()}|${i.cien||''}`));
+  // Palavras-chave para detectar audiências
+  const AUD_KW = ['audiência','pauta de julgamento','incluído em pauta','sessão de julgamento',
+                  'data de sessão','sustentação oral','pauta para julgamento','sessão virtual'];
+  const isAudiencia = row => {
+    const txt = [row[iDesc], iProv>=0?row[iProv]:null]
+      .filter(Boolean).map(v=>String(v).toLowerCase()).join(' ');
+    return AUD_KW.some(kw => txt.includes(kw));
+  };
+
+  // Chave composta proc+cien para evitar reimportar a mesma publicação
+  const existingKeys  = new Set(items.map(i=>`${(i.proc||'').trim()}|${i.cien||''}`));
+  const existingPautas= new Set(pautas.map(p=>`${(p.proc||'').trim()}|${p.data||''}`));
   const batch = writeBatch(db);
   let imported = 0, skipped = 0;
+  const candidatos = []; // possíveis audiências para revisão
 
   for (const row of dataRows) {
     const proc = cleanProc(row[iProc]);
     if (!proc) continue;
-    const key = `${proc}|${fmtD(row[iCien])||''}`;
+
+    const cienStr  = fmtD(row[iCien]);
+    const fatalStr = iFatal >= 0 ? fmtD(row[iFatal]) : null;
+    const caso     = String(row[iCaso]||'').trim();
+    const desc     = String(row[iDesc]||'').trim();
+    const prov     = iProv>=0 ? String(row[iProv]||'').trim() : '';
+    const adv      = iAdv>=0  ? String(row[iAdv]||'').trim()  : '';
+
+    // Detectar audiência antes de checar duplicatas
+    if (isAudiencia(row)) {
+      candidatos.push({ proc, caso, cien:cienStr, fatal:fatalStr, desc, prov, adv });
+      continue; // não entra no batch de pendentes — será tratado separadamente
+    }
+
+    const key = `${proc}|${cienStr||''}`;
     if (existingKeys.has(key)) { skipped++; continue; }
 
-    // Calcular dur e fatal a partir da coluna "Fatal" da planilha
-    const fatalStr = iFatal >= 0 ? fmtD(row[iFatal]) : null;
     let dur = 'S/P';
-    if (fatalStr) {
-      const cienStr = fmtD(row[iCien]);
-      if (cienStr) {
-        let d = new Date(cienStr + 'T00:00:00'), count = 0;
-        const f = new Date(fatalStr + 'T00:00:00');
-        while (d < f) { d.setDate(d.getDate()+1); if(isUtil(d)) count++; }
-        dur = count <= 6 ? '5' : count <= 12 ? '10' : count <= 20 ? '15' : count <= 35 ? '30' : 'S/P';
-      }
+    if (fatalStr && cienStr) {
+      let d = new Date(cienStr + 'T00:00:00'), count = 0;
+      const f = new Date(fatalStr + 'T00:00:00');
+      while (d < f) { d.setDate(d.getDate()+1); if(isUtil(d)) count++; }
+      dur = count <= 6 ? '5' : count <= 12 ? '10' : count <= 20 ? '15' : count <= 35 ? '30' : 'S/P';
     }
 
     const newRef = doc(col);
     batch.set(newRef, {
-      proc,
-      caso:   String(row[iCaso]||'').trim(),
-      cien:   fmtD(row[iCien]),
-      desc:   String(row[iDesc]||'').trim(),
-      prov:   iProv>=0 ? String(row[iProv]||'').trim() : '',
-      adv:    iAdv>=0  ? String(row[iAdv]||'').trim()  : '',
-      org:    '', prazoTF: null, fatal: fatalStr || null,
+      proc, caso, cien: cienStr, desc, prov, adv,
+      org: '', prazoTF: null, fatal: fatalStr || null,
       dur, tipo: 'judicial', alinhaTIM: false,
-      status:    'pendente', arqAt: null,
+      status: 'pendente', arqAt: null,
       createdAt: serverTimestamp(),
     });
     imported++;
   }
 
-  if (!imported) {
+  // Commit dos pendentes regulares
+  try {
+    if (imported) await batch.commit();
+  } catch(err) { alert('Erro ao importar: ' + err.message); e.target.value=''; return; }
+
+  // Mostrar resultado e, se houver candidatos, abrir modal de revisão
+  if (!imported && !candidatos.length) {
     alert(skipped > 0
       ? `Todos os ${skipped} processos já estão no sistema.`
       : 'Nenhum processo válido encontrado.');
     e.target.value=''; return;
   }
-  try {
-    await batch.commit();
-    window.setTab('pend');
-    alert(`✅ ${imported} processo(s) importado(s) como pendente(s).${skipped?' '+skipped+' já existentes ignorados.':''}`);
-  } catch(err) {
-    alert('Erro ao importar: ' + err.message);
+
+  let msg = '';
+  if (imported) { msg += `✅ ${imported} processo(s) importado(s) como pendente(s).`; window.setTab('pend'); }
+  if (skipped)  { msg += ` ${skipped} já existentes ignorados.`; }
+  if (msg) alert(msg);
+
+  // Abrir modal de revisão de audiências detectadas
+  if (candidatos.length) {
+    window._pautaCandidatos = candidatos;
+    document.getElementById('aud-import-list').innerHTML = candidatos.map((c,i)=>`
+      <div class="aud-cand">
+        <div class="aud-cand-proc">${esc(c.proc)}</div>
+        <div class="aud-cand-caso">${esc(c.caso||'—')}</div>
+        <div class="aud-cand-desc">${esc(c.desc||c.prov||'')}</div>
+        <select id="aud-act-${i}">
+          <option value="pauta">📅 Adicionar à Pauta de Audiências</option>
+          <option value="pendente">📋 Criar como Pendente ALERTE</option>
+          <option value="ignorar">🚫 Ignorar</option>
+        </select>
+      </div>`).join('');
+    openOverlay('ovl-aud-import');
   }
+
   e.target.value='';
 });
 
@@ -1327,7 +1497,7 @@ function renderPautaCard(p) {
   const cls  = pautaUrgClass(p);
   const hora = p.hora ? ` às ${p.hora}` : '';
   const arch = p.status === 'realizada';
-  const acts = arch ? `
+  const acts = !canEdit() ? '' : arch ? `
     <button class="btn btn-edit" style="font-size:.78rem;padding:5px 10px" onclick="window.reabrirPauta('${p.id}')">↩ Reabrir</button>
     <button class="btn btn-del"  style="font-size:.78rem;padding:5px 10px" onclick="window.excluirPauta('${p.id}')">🗑 Excluir</button>
   ` : `
@@ -1366,7 +1536,7 @@ function renderPauta(list) {
 
   let html = `<div class="pauta-header">
     <h3>Pauta de Audiências (${ativas.length} agendada${ativas.length!==1?'s':''})</h3>
-    <button class="btn-nova-aud" onclick="window.novaPauta()">+ Nova Audiência</button>
+    ${canEdit()?`<button class="btn-nova-aud" onclick="window.novaPauta()">+ Nova Audiência</button>`:''}
   </div>`;
 
   if (!ativas.length) html += `<div class="empty">Nenhuma audiência agendada.</div>`;
@@ -1458,6 +1628,52 @@ window.excluirPauta = async function(id) {
 
 window.toggleArqPauta = function() { showArqPauta=!showArqPauta; render(); };
 
+window.confirmarAudImport = async function() {
+  const candidatos = window._pautaCandidatos || [];
+  if (!candidatos.length) { closeOverlay('ovl-aud-import'); return; }
+  const batchAud = writeBatch(db);
+  let nPauta = 0, nPend = 0;
+  for (let i = 0; i < candidatos.length; i++) {
+    const c = candidatos[i];
+    const acao = document.getElementById(`aud-act-${i}`)?.value || 'ignorar';
+    if (acao === 'pauta') {
+      batchAud.set(doc(colPautas), {
+        proc: c.proc, caso: c.caso,
+        data: c.fatal || null, // data da sessão = fatal quando disponível
+        hora: '', vara: '', obs: c.desc || c.prov || '',
+        status: 'agendada', createdAt: serverTimestamp(),
+      });
+      nPauta++;
+    } else if (acao === 'pendente') {
+      let dur = 'S/P';
+      if (c.fatal && c.cien) {
+        let d = new Date(c.cien+'T00:00:00'), count=0;
+        const f = new Date(c.fatal+'T00:00:00');
+        while(d<f){d.setDate(d.getDate()+1);if(isUtil(d))count++;}
+        dur = count<=6?'5':count<=12?'10':count<=20?'15':count<=35?'30':'S/P';
+      }
+      batchAud.set(doc(col), {
+        proc: c.proc, caso: c.caso, cien: c.cien, desc: c.desc,
+        prov: c.prov, adv: c.adv, org: '',
+        prazoTF: null, fatal: c.fatal||null, dur,
+        tipo: 'judicial', alinhaTIM: false,
+        status: 'pendente', arqAt: null, createdAt: serverTimestamp(),
+      });
+      nPend++;
+    }
+  }
+  try {
+    await batchAud.commit();
+    closeOverlay('ovl-aud-import');
+    window._pautaCandidatos = [];
+    let msg = [];
+    if (nPauta) msg.push(`${nPauta} audiência(s) adicionada(s) à Pauta`);
+    if (nPend)  msg.push(`${nPend} criado(s) como pendente(s)`);
+    if (msg.length) alert('✅ ' + msg.join(' | '));
+    if (nPauta) window.setTab('pauta');
+  } catch(err) { alert('Erro: ' + err.message); }
+};
+
 window.setTab      = t => { tab=t; render(); };
 window.openNew     = openNewModal;
 window.openEdit    = openEditModal;
@@ -1475,6 +1691,24 @@ window.aNadaFazer  = doANadaFazer;
 window.reabrir     = doReabrir;
 window.excluir     = doExcluir;
 </script>
+
+<!-- Modal: revisão de audiências detectadas no ALERTE -->
+<div class="overlay" id="ovl-aud-import">
+  <div class="modal" style="max-width:620px">
+    <div class="m-hdr">
+      <h2>📅 Audiências Detectadas no ALERTE</h2>
+      <button class="m-close" onclick="closeOverlay('ovl-aud-import')">×</button>
+    </div>
+    <div class="m-body">
+      <p style="margin-bottom:16px;font-size:.88rem;color:#555">As publicações abaixo foram identificadas como possíveis audiências. Defina o que fazer com cada uma:</p>
+      <div id="aud-import-list"></div>
+    </div>
+    <div class="m-foot">
+      <button class="btn btn-edit" onclick="closeOverlay('ovl-aud-import')">Cancelar</button>
+      <button class="btn btn-prot" onclick="window.confirmarAudImport()">Confirmar seleções</button>
+    </div>
+  </div>
+</div>
 
 <!-- Modal: nova / editar audiência -->
 <div class="overlay" id="ovl-pauta">
@@ -1592,6 +1826,45 @@ window.excluir     = doExcluir;
           <div class="fg"><label>60 dias corridos → D-X</label><input type="number" id="cfg-adm-lim-60" min="1"/></div>
         </div>
       </div>
+      <!-- ADMIN ONLY: Gerenciamento de Usuários -->
+      <div id="cfg-users-sec" class="cfg-sec" style="display:none">
+        <h3>👥 Usuários do Sistema</h3>
+        <p class="cfg-desc">Crie e gerencie o acesso dos membros da equipe.</p>
+
+        <!-- Lista de usuários existentes -->
+        <div id="cfg-user-list" style="margin-bottom:16px"></div>
+
+        <!-- Formulário de criação -->
+        <div style="background:#f8f8f8;border-radius:10px;padding:14px;margin-top:6px">
+          <p style="font-weight:700;font-size:.82rem;margin:0 0 10px">Novo Usuário</p>
+          <div class="fgrid">
+            <div class="fg">
+              <label>Nome</label>
+              <input type="text" id="nu-nome" placeholder="Ex: Ana Silva"/>
+            </div>
+            <div class="fg">
+              <label>E-mail</label>
+              <input type="email" id="nu-email" placeholder="ana@exemplo.com"/>
+            </div>
+            <div class="fg">
+              <label>Senha inicial</label>
+              <input type="password" id="nu-senha" placeholder="mín. 6 caracteres"/>
+            </div>
+            <div class="fg">
+              <label>Papel</label>
+              <select id="nu-role">
+                <option value="estagiario">Estagiário</option>
+                <option value="advogado">Advogado</option>
+                <option value="coordenadora">Coordenadora</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <div id="nu-err" style="color:#dc2626;font-size:.78rem;margin-top:4px"></div>
+          <button id="btn-criar-user" class="btn btn-prot" style="margin-top:10px" onclick="window.criarUsuario()">Criar Usuário</button>
+        </div>
+      </div>
+
       <div class="alert-y" style="margin-top:14px;font-size:.75rem;">
         ⚠️ Em breve estas configurações serão restritas ao login da coordenadora.
       </div>
