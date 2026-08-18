@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Monitor de Prazos TIM — Trouw e Fraga</title>
+<title>Monitor de Prazos TF — Trouw e Fraga</title>
 <style>
   :root {
     color-scheme: light;
@@ -20,6 +20,40 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* PAUTA CARDS */
+  .pauta-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .pauta-header h3 { font-size:.85rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .btn-nova-aud { background:var(--teal); color:var(--navy-dark); border:none; border-radius:8px; padding:7px 14px; font-size:.82rem; font-weight:800; cursor:pointer; }
+  .btn-nova-aud:hover { filter:brightness(1.1); }
+  .pcard { background:#fff; border-radius:10px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.08); border-left:4px solid #e0e0e0; }
+  .pcard.pc-hoje    { border-left-color:#DC2626; }
+  .pcard.pc-amanha  { border-left-color:#EA580C; }
+  .pcard.pc-semana  { border-left-color:#B45309; }
+  .pcard.pc-futuro  { border-left-color:#4DBFCF; }
+  .pcard.pc-passada { border-left-color:#9ca3af; opacity:.7; }
+  .pcard.pc-realizada { border-left-color:#4ade80; opacity:.75; }
+  .pc-h { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:12px 16px 8px; }
+  .pc-l { flex:1; min-width:0; }
+  .pc-proc { font-size:.72rem; color:var(--muted); margin-bottom:2px; }
+  .pc-caso { font-size:.95rem; font-weight:800; color:var(--navy-dark); margin-bottom:4px; }
+  .pc-meta { display:flex; flex-wrap:wrap; gap:10px; font-size:.76rem; color:#888; }
+  .pc-r { display:flex; flex-direction:column; align-items:flex-end; gap:5px; flex-shrink:0; }
+  .pc-date-big { font-size:1.1rem; font-weight:800; color:var(--navy-dark); }
+  .pc-time { font-size:.78rem; color:var(--muted); }
+  .pc-dias { font-size:.72rem; font-weight:700; padding:2px 8px; border-radius:12px; white-space:nowrap; }
+  .pc-dias.hoje   { background:#FEE2E2; color:#DC2626; }
+  .pc-dias.amanha { background:#FFEDD5; color:#EA580C; }
+  .pc-dias.semana { background:#FEF3C7; color:#B45309; }
+  .pc-dias.futuro { background:#f0fdfe; color:#0e7490; }
+  .pc-dias.passada{ background:#f3f4f6; color:#6b7280; }
+  .pc-status { padding:3px 10px; border-radius:20px; font-size:.7rem; font-weight:800; }
+  .pc-s-agendada  { background:#dbeafe; color:#1e40af; }
+  .pc-s-realizada { background:#dcfce7; color:#166534; }
+  .pc-s-adiada    { background:#fef9c3; color:#854d0e; }
+  .pc-acts { padding:8px 16px 12px; display:flex; gap:8px; flex-wrap:wrap; border-top:1px solid #f3f4f6; }
+  .pc-arq-sec { margin-top:20px; }
+  .pc-arq-toggle { background:none; border:none; color:var(--muted); font-size:.8rem; cursor:pointer; padding:4px 0; text-decoration:underline; }
 
   /* HEADER */
   .hdr { background: var(--navy-dark); color: #fff; padding: 16px 20px 0; }
@@ -195,7 +229,7 @@
   <div class="login-box">
     <div class="lb-brand">
       <small>Trouw e Fraga Advogados</small>
-      <h2>Monitor de Prazos TIM</h2>
+      <h2>Monitor de Prazos TF</h2>
     </div>
     <div class="fg">
       <label>Usuário</label>
@@ -217,7 +251,7 @@
   <div class="hdr-top">
     <div class="hdr-brand">
       <small>Trouw e Fraga Advogados</small>
-      <h1>Monitor de Prazos TIM</h1>
+      <h1>Monitor de Prazos TF</h1>
       <div class="hdr-date" id="hdr-date"></div>
     </div>
     <div class="hdr-right">
@@ -250,6 +284,7 @@
   <button class="tab"        id="tab-todos" onclick="setTab('todos')">Em Aberto <span class="cnt" id="cnt-todos">0</span></button>
   <button class="tab"        id="tab-pend"  onclick="setTab('pend')">Pendentes ALERTE <span class="cnt" id="cnt-pend">0</span></button>
   <button class="tab"        id="tab-arq"   onclick="setTab('arq')">Arquivo <span class="cnt" id="cnt-arq">0</span></button>
+  <button class="tab"        id="tab-pauta" onclick="setTab('pauta')">📅 Pauta <span class="cnt" id="cnt-pauta">0</span></button>
 </div>
 
 <div class="content">
@@ -257,6 +292,7 @@
   <div id="list-todos" style="display:none"></div>
   <div id="list-arq"   style="display:none"></div>
   <div id="list-pend"  style="display:none"></div>
+  <div id="list-pauta" style="display:none"></div>
 </div>
 
 <!-- Modal: novo / editar -->
@@ -343,15 +379,20 @@ initializeAppCheck(app, {
   isTokenAutoRefreshEnabled: true
 });
 const auth = getAuth(app);
-const db   = getFirestore(app);
-const col  = collection(db, 'prazos');
+const db        = getFirestore(app);
+const col       = collection(db, 'prazos');
+const colPautas = collection(db, 'audiencias');
 
 // ── State ─────────────────────────────────────────────────────────────────
-let items      = [];
-let editId     = null;
-let tab        = 'hoje';
-let filterUrg  = null;
-let filterTipo = null;
+let items       = [];
+let pautas      = [];
+let editId      = null;
+let editPautaId = null;
+let actPautaId  = null;
+let tab         = 'hoje';
+let filterUrg   = null;
+let filterTipo  = null;
+let showArqPauta = false;
 
 // ── Config ────────────────────────────────────────────────────────────────
 const defaultCfg = {
@@ -436,6 +477,10 @@ onAuthStateChanged(auth, user => {
       document.getElementById('sync-label').textContent='Sem conexão';
       console.error(err);
     });
+    onSnapshot(colPautas, snap => {
+      pautas = snap.docs.map(d=>({id:d.id,...d.data()}));
+      render();
+    }, err => console.warn('Pautas listener error', err));
   } else {
     document.getElementById('login-screen').classList.remove('hidden');
     document.getElementById('app').classList.remove('visible');
@@ -443,6 +488,7 @@ onAuthStateChanged(auth, user => {
     if (unsubscribeConfig)   { unsubscribeConfig();   unsubscribeConfig   = null; }
     cfg = {...defaultCfg};
     items = [];
+    pautas = [];
   }
 });
 
@@ -479,10 +525,12 @@ function render() {
   const hoje = open.filter(i=>i.prazoTF&&parseD(i.prazoTF)<=t).sort((a,b)=>urgOrd(urgencia(a))-urgOrd(urgencia(b)));
   const todos= [...open].sort((a,b)=>{const d=urgOrd(urgencia(a))-urgOrd(urgencia(b));return d||((a.prazoTF||'').localeCompare(b.prazoTF||''));});
 
+  const pautasAtivas = pautas.filter(p=>p.status==='agendada'||p.status==='adiada');
   document.getElementById('cnt-hoje').textContent =hoje.length;
   document.getElementById('cnt-todos').textContent=open.length;
   document.getElementById('cnt-arq').textContent  =arq.length;
   document.getElementById('cnt-pend').textContent =pend.length;
+  document.getElementById('cnt-pauta').textContent=pautasAtivas.length;
   document.getElementById('hdr-date').textContent =
     today().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
 
@@ -516,8 +564,9 @@ function render() {
   document.getElementById('list-todos').innerHTML=renderList(todosF,true);
   document.getElementById('list-arq').innerHTML  =renderList(arq,false,true);
   document.getElementById('list-pend').innerHTML =renderPendentes(pend);
+  document.getElementById('list-pauta').innerHTML=renderPauta(pautas);
 
-  ['hoje','todos','arq','pend'].forEach(id=>{
+  ['hoje','todos','arq','pend','pauta'].forEach(id=>{
     document.getElementById(`list-${id}`).style.display=tab===id?'':'none';
     document.getElementById(`tab-${id}`).classList.toggle('active',tab===id);
   });
@@ -1245,6 +1294,170 @@ window.limparPendentes = async function() {
   } catch(e) { alert('Erro: ' + e.message); }
 };
 
+// ── Pauta de Julgamento ───────────────────────────────────────────────────
+function pautaUrgClass(p) {
+  if (p.status === 'realizada') return 'pc-realizada';
+  if (!p.data) return 'pc-futuro';
+  const d = parseD(p.data), t = today();
+  const amanha = new Date(t); amanha.setDate(amanha.getDate()+1);
+  const semana = new Date(t); semana.setDate(semana.getDate()+7);
+  if (d < t)          return 'pc-passada';
+  if (sameDay(d,t))   return 'pc-hoje';
+  if (sameDay(d,amanha)) return 'pc-amanha';
+  if (d <= semana)    return 'pc-semana';
+  return 'pc-futuro';
+}
+function pautaDiasLabel(p) {
+  if (!p.data) return '';
+  const d = parseD(p.data), t = today();
+  const diff = Math.round((d-t)/(1000*60*60*24));
+  const cls = pautaUrgClass(p).replace('pc-','');
+  if (p.status==='realizada') return `<span class="pc-dias futuro">Realizada</span>`;
+  if (diff < 0)  return `<span class="pc-dias passada">${Math.abs(diff)}d atrás</span>`;
+  if (diff === 0) return `<span class="pc-dias hoje">Hoje</span>`;
+  if (diff === 1) return `<span class="pc-dias amanha">Amanhã</span>`;
+  return `<span class="pc-dias ${cls}">Em ${diff} dias</span>`;
+}
+function pautaStatusBadge(s) {
+  const map = {agendada:'pc-s-agendada',realizada:'pc-s-realizada',adiada:'pc-s-adiada'};
+  const label = {agendada:'Agendada',realizada:'Realizada',adiada:'Adiada'};
+  return `<span class="pc-status ${map[s]||'pc-s-agendada'}">${label[s]||s}</span>`;
+}
+function renderPautaCard(p) {
+  const cls  = pautaUrgClass(p);
+  const hora = p.hora ? ` às ${p.hora}` : '';
+  const arch = p.status === 'realizada';
+  const acts = arch ? `
+    <button class="btn btn-edit" style="font-size:.78rem;padding:5px 10px" onclick="window.reabrirPauta('${p.id}')">↩ Reabrir</button>
+    <button class="btn btn-del"  style="font-size:.78rem;padding:5px 10px" onclick="window.excluirPauta('${p.id}')">🗑 Excluir</button>
+  ` : `
+    <button class="btn btn-edit"  style="font-size:.78rem;padding:5px 10px" onclick="window.editarPauta('${p.id}')">✏ Editar</button>
+    <button class="btn btn-prot"  style="font-size:.78rem;padding:5px 10px" onclick="window.abrirActPauta('${p.id}')">📋 Realizada / Adiar</button>
+    <button class="btn btn-del"   style="font-size:.78rem;padding:5px 10px" onclick="window.excluirPauta('${p.id}')">🗑 Excluir</button>
+  `;
+  return `<div class="pcard ${cls}">
+    <div class="pc-h">
+      <div class="pc-l">
+        <div class="pc-proc">${esc(p.proc||'')}</div>
+        <div class="pc-caso">${esc(p.caso||'—')}</div>
+        <div class="pc-meta">
+          ${p.vara?`<span>🏛 ${esc(p.vara)}</span>`:''}
+          ${p.obs ?`<span>📝 ${esc(p.obs)}</span>`:''}
+          ${p.resultado?`<span>✅ ${esc(p.resultado)}</span>`:''}
+        </div>
+      </div>
+      <div class="pc-r">
+        ${pautaStatusBadge(p.status||'agendada')}
+        <div class="pc-date-big">${p.data?fmtBR(p.data):'—'}</div>
+        ${p.hora?`<div class="pc-time">${p.hora}</div>`:''}
+        ${pautaDiasLabel(p)}
+      </div>
+    </div>
+    <div class="pc-acts">${acts}</div>
+  </div>`;
+}
+function renderPauta(list) {
+  const ativas = list
+    .filter(p=>p.status!=='realizada')
+    .sort((a,b)=>(a.data||'').localeCompare(b.data||''));
+  const realizadas = list
+    .filter(p=>p.status==='realizada')
+    .sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+
+  let html = `<div class="pauta-header">
+    <h3>Pauta de Audiências (${ativas.length} agendada${ativas.length!==1?'s':''})</h3>
+    <button class="btn-nova-aud" onclick="window.novaPauta()">+ Nova Audiência</button>
+  </div>`;
+
+  if (!ativas.length) html += `<div class="empty">Nenhuma audiência agendada.</div>`;
+  else html += ativas.map(renderPautaCard).join('');
+
+  if (realizadas.length) {
+    html += `<div class="pc-arq-sec">
+      <button class="pc-arq-toggle" onclick="window.toggleArqPauta()">
+        ${showArqPauta?'▾ Ocultar realizadas':'▸ Ver realizadas ('+realizadas.length+')'}
+      </button>
+      ${showArqPauta ? realizadas.map(renderPautaCard).join('') : ''}
+    </div>`;
+  }
+  return html;
+}
+
+function openPautaModal(id) {
+  const p = id ? pautas.find(x=>x.id===id) : null;
+  editPautaId = id || null;
+  document.getElementById('m-pauta-title').textContent = p ? 'Editar Audiência' : 'Nova Audiência';
+  document.getElementById('p-proc').value = p?.proc || '';
+  document.getElementById('p-caso').value = p?.caso || '';
+  document.getElementById('p-data').value = p?.data || '';
+  document.getElementById('p-hora').value = p?.hora || '';
+  document.getElementById('p-vara').value = p?.vara || '';
+  document.getElementById('p-obs').value  = p?.obs  || '';
+  openOverlay('ovl-pauta');
+}
+window.novaPauta   = () => openPautaModal(null);
+window.editarPauta = id => openPautaModal(id);
+
+window.savePauta = async function() {
+  const data = document.getElementById('p-data').value;
+  const caso = document.getElementById('p-caso').value.trim();
+  if (!caso || !data) { alert('Preencha ao menos o Caso e a Data.'); return; }
+  const payload = {
+    proc: document.getElementById('p-proc').value.trim(),
+    caso,
+    data,
+    hora: document.getElementById('p-hora').value || '',
+    vara: document.getElementById('p-vara').value.trim(),
+    obs:  document.getElementById('p-obs').value.trim(),
+  };
+  if (editPautaId) {
+    await updateDoc(doc(db,'audiencias',editPautaId), payload);
+  } else {
+    await addDoc(colPautas, {...payload, status:'agendada', createdAt:serverTimestamp()});
+  }
+  closeOverlay('ovl-pauta');
+};
+
+window.abrirActPauta = function(id) {
+  actPautaId = id;
+  const p = pautas.find(x=>x.id===id);
+  document.getElementById('m-pact-title').textContent = p?.caso || 'Audiência';
+  document.getElementById('pact-resultado').value = '';
+  document.getElementById('pact-nova-data').value = p?.data || '';
+  document.getElementById('pact-nova-hora').value = p?.hora || '';
+  openOverlay('ovl-pauta-act');
+};
+
+window.confirmarRealizada = async function() {
+  if (!actPautaId) return;
+  const resultado = document.getElementById('pact-resultado').value.trim();
+  await updateDoc(doc(db,'audiencias',actPautaId), {status:'realizada', resultado});
+  closeOverlay('ovl-pauta-act');
+  actPautaId = null;
+};
+
+window.confirmarAdiar = async function() {
+  if (!actPautaId) return;
+  const novaData = document.getElementById('pact-nova-data').value;
+  const novaHora = document.getElementById('pact-nova-hora').value;
+  if (!novaData) { alert('Informe a nova data.'); return; }
+  await updateDoc(doc(db,'audiencias',actPautaId), {status:'adiada', data:novaData, hora:novaHora});
+  closeOverlay('ovl-pauta-act');
+  actPautaId = null;
+};
+
+window.reabrirPauta = async function(id) {
+  await updateDoc(doc(db,'audiencias',id), {status:'agendada', resultado:''});
+};
+
+window.excluirPauta = async function(id) {
+  const p = pautas.find(x=>x.id===id);
+  if (!confirm(`Excluir audiência "${p?.caso||id}"?`)) return;
+  await deleteDoc(doc(db,'audiencias',id));
+};
+
+window.toggleArqPauta = function() { showArqPauta=!showArqPauta; render(); };
+
 window.setTab      = t => { tab=t; render(); };
 window.openNew     = openNewModal;
 window.openEdit    = openEditModal;
@@ -1262,6 +1475,56 @@ window.aNadaFazer  = doANadaFazer;
 window.reabrir     = doReabrir;
 window.excluir     = doExcluir;
 </script>
+
+<!-- Modal: nova / editar audiência -->
+<div class="overlay" id="ovl-pauta">
+  <div class="modal">
+    <div class="m-hdr">
+      <h2 id="m-pauta-title">Nova Audiência</h2>
+      <button class="m-close" onclick="closeOverlay('ovl-pauta')">×</button>
+    </div>
+    <div class="m-body">
+      <div class="fgrid">
+        <div class="fg full"><label>Nº do Processo</label><input id="p-proc" type="text" placeholder="0000000-00.0000.0.00.0000"/></div>
+        <div class="fg full"><label>Caso</label><input id="p-caso" type="text" placeholder="Ex: TIM JUD 001"/></div>
+        <div class="fg"><label>Data</label><input id="p-data" type="date"/></div>
+        <div class="fg"><label>Hora</label><input id="p-hora" type="time" placeholder="00:00"/></div>
+        <div class="fg full"><label>Vara / Tribunal</label><input id="p-vara" type="text" placeholder="Ex: 3ª Vara Cível de SP"/></div>
+        <div class="fg full"><label>Observações</label><textarea id="p-obs" placeholder="Anotações sobre a audiência…" style="height:70px"></textarea></div>
+      </div>
+    </div>
+    <div class="m-foot">
+      <button class="btn btn-edit" onclick="closeOverlay('ovl-pauta')">Cancelar</button>
+      <button class="btn btn-prot" onclick="window.savePauta()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: ação audiência (Realizada / Adiar) -->
+<div class="overlay" id="ovl-pauta-act">
+  <div class="modal" style="max-width:420px">
+    <div class="m-hdr">
+      <h2 id="m-pact-title">Audiência</h2>
+      <button class="m-close" onclick="closeOverlay('ovl-pauta-act')">×</button>
+    </div>
+    <div class="m-body">
+      <div id="pact-realizada-sec">
+        <p style="margin-bottom:12px;font-size:.88rem;color:#555">Registre o resultado da audiência:</p>
+        <div class="fg full"><label>Resultado</label><textarea id="pact-resultado" placeholder="Ex: Acordo homologado, audiência convertida em diligência…" style="height:80px"></textarea></div>
+        <button class="btn btn-prot" style="width:100%;margin-top:8px" onclick="window.confirmarRealizada()">✅ Marcar como Realizada</button>
+      </div>
+      <hr style="margin:16px 0;border-color:#eee"/>
+      <div id="pact-adiar-sec">
+        <p style="margin-bottom:12px;font-size:.88rem;color:#555">Adiar para nova data:</p>
+        <div class="fgrid">
+          <div class="fg"><label>Nova Data</label><input id="pact-nova-data" type="date"/></div>
+          <div class="fg"><label>Nova Hora</label><input id="pact-nova-hora" type="time"/></div>
+        </div>
+        <button class="btn btn-edit" style="width:100%;margin-top:8px" onclick="window.confirmarAdiar()">📅 Adiar Audiência</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Modal: configurações -->
 <div class="overlay" id="ovl-cfg">
