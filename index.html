@@ -144,6 +144,7 @@
   .cdi-val.today { color: var(--c-urg); }
 
   .card-desc { padding: 8px 16px 10px; border-top: 1px solid #f2f2f2; font-size: .78rem; color: #777; line-height: 1.5; }
+  .btn-desc-more { background: none; border: none; color: var(--teal); font-size: .75rem; font-weight: 700; cursor: pointer; padding: 0; text-decoration: underline; }
   .card-act { padding: 10px 16px 12px; border-top: 1px solid #f5f5f5; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
   .btn { padding: 6px 14px; border-radius: 6px; font-size: .8rem; font-weight: 700; cursor: pointer; border: none; transition: filter .15s; }
@@ -549,6 +550,15 @@ window.doLogin = async function() {
 
 window.doLogout = async function() { await signOut(auth); };
 
+window.toggleDesc = function(btn) {
+  const parent = btn.parentElement;
+  const sibling = parent.classList.contains('desc-short')
+    ? parent.nextElementSibling
+    : parent.previousElementSibling;
+  parent.style.display = 'none';
+  sibling.style.display = '';
+};
+
 function updateHeaderUser() {
   const roleLabel = { admin:'Admin', coordenadora:'Coord.', advogado:'Advogado', estagiario:'Estagiário' };
   const nome = userNome();
@@ -647,9 +657,15 @@ function renderCard(item,acts,arch){
   const tipoBadge=item.tipo==='administrativo'
     ?`<span class="tipo-badge tb-administrativo">ADM</span>`
     :`<span class="tipo-badge tb-judicial">JUD</span>`;
+  const DESC_MAX = 300;
+  const descTxt = item.desc||'';
+  const descTrunc = descTxt.length > DESC_MAX;
+  const descHtml = descTrunc
+    ? `<span class="desc-short">${esc(descTxt.substring(0,DESC_MAX))}… <button class="btn-desc-more" onclick="toggleDesc(this)">Mostrar mais</button></span><span class="desc-full" style="display:none">${esc(descTxt)} <button class="btn-desc-more" onclick="toggleDesc(this)">Mostrar menos</button></span>`
+    : esc(descTxt);
   const desc=(item.desc||item.prov)?`
     <div class="card-desc">
-      ${item.desc?`<b>Desc:</b> ${esc(item.desc)}<br>`:''}
+      ${item.desc?`<b>Desc:</b> ${descHtml}<br>`:''}
       ${item.prov?`<b>Providência:</b> ${esc(item.prov)}`:''}
     </div>`:'';
   let actHTML='';
@@ -1283,7 +1299,7 @@ function renderPendentes(list) {
         <div class="cdi"><div class="cdi-lbl">Fatal</div><div class="cdi-val${fatCls}">${i.fatal?fmtBR(i.fatal):'S/P'}</div></div>
       </div>
       ${i.prov?`<div class="card-desc"><b>Providência:</b> ${esc(i.prov)}</div>`:''}
-      ${i.desc?`<div class="card-desc" style="font-size:.73rem;color:#aaa;border-top:none;padding-top:0"><b>Desc:</b> ${esc(i.desc.substring(0,200))}${i.desc.length>200?'…':''}</div>`:''}
+      ${i.desc?(()=>{const t=i.desc,big=t.length>300;return`<div class="card-desc" style="font-size:.73rem;color:#aaa;border-top:none;padding-top:0"><b>Desc:</b> ${big?`<span class="desc-short">${esc(t.substring(0,300))}… <button class="btn-desc-more" onclick="toggleDesc(this)">Mostrar mais</button></span><span class="desc-full" style="display:none">${esc(t)} <button class="btn-desc-more" onclick="toggleDesc(this)">Mostrar menos</button></span>`:esc(t)}</div>`;})():''}
       ${canEdit()?`<div class="card-act">
         <button class="btn btn-rev" onclick="revisarPendente('${i.id}')">✏ Revisar e Confirmar</button>
         <button class="btn btn-del" onclick="descartarPendente('${i.id}')">🗑 Descartar</button>
