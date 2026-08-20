@@ -314,7 +314,7 @@
         <div class="fg full"><label>Nº do Processo</label><input id="f-proc" type="text" placeholder="0000000-00.0000.0.00.0000" oninput="window.autoOrg()"/></div>
         <div class="fg full"><label>Caso</label><input id="f-caso" type="text" placeholder="Ex: Recurso Ordinário"/></div>
         <div class="fg"><label>Órgão <span style="font-size:.7rem;color:var(--teal);font-weight:400">(automático)</span></label><input id="f-org" type="text" placeholder="Detectado pelo nº" readonly style="background:#f0f4f5;cursor:default;color:#555"/></div>
-        <div class="fg"><label id="f-cien-label">Data da Disponibilização</label><input id="f-cien" type="date"/></div>
+        <div class="fg"><label id="f-cien-label">Data da Ciência</label><input id="f-cien" type="date"/></div>
         <div class="fg">
           <label id="f-dur-label">Duração (dias úteis)</label>
           <select id="f-dur" onchange="updPreview()">
@@ -445,10 +445,10 @@ function subUtil(d,n)   { let x=new Date(d),c=0; while(c<n){x.setDate(x.getDate(
 // ── Calc logic ────────────────────────────────────────────────────────────
 function calcFatal(cien,dur) {
   if(!cien||dur==='S/P')return null;
-  return addUtil(proxUtil(parseD(cien)),parseInt(dur));
+  return addUtil(proxUtil(parseD(cien)),parseInt(dur)-1);
 }
 function calcPrazoElaborar(cien,dur,fatal) {
-  if(dur==='S/P')return addUtil(proxUtil(parseD(cien)),5);
+  if(dur==='S/P')return addUtil(proxUtil(parseD(cien)),4);
   const n=parseInt(dur); return subUtil(fatal,n===5?cfg.jud_elab_5:n===10?cfg.jud_elab_10:n===30?cfg.jud_elab_30:cfg.jud_elab_15);
 }
 function limiteElaborar(dur,fatal) {
@@ -675,7 +675,7 @@ function renderCard(item,acts,arch){
         <div class="c-meta">
           ${item.org?`<span>🏛 ${esc(item.org)}</span>`:''}
           <span>⚖ ${item.dur==='S/P'?'Sem prazo fatal':item.dur+'d úteis'}</span>
-          <span>📩 Disponibilização: ${fmtBR(item.cien)}</span>
+          <span>📩 Ciência: ${fmtBR(item.cien)}</span>
         </div>
       </div>
       <div class="card-r">${tipoBadge}<span class="sbadge ${sClass}">${item.status}</span>${urgBadge}</div>
@@ -848,7 +848,7 @@ async function doExcluir(id){
 function setTipoForm(tipo){
   const adm = tipo==='administrativo';
   document.getElementById('f-tipo').value = tipo;
-  document.getElementById('f-cien-label').textContent = 'Data da Disponibilização';
+  document.getElementById('f-cien-label').textContent = 'Data da Ciência';
   document.getElementById('f-dur-label').textContent  = adm ? 'Duração (dias corridos)' : 'Duração (dias úteis)';
   document.getElementById('f-caso').placeholder = adm ? 'Ex: TIM ADM 001' : 'Ex: TIM JUD 001';
   // Órgão: editável no adm (número diferente do CNJ), automático no judicial
@@ -951,7 +951,7 @@ function calcPrazoTIM(cien, dur, fatal) {
   if(dur==='S/P') return calcPrazoElaborar(cien, dur, fatal);
   const n = parseInt(dur);
   const dias = n===30?cfg.jud_tim_30:n===15?cfg.jud_tim_15:n===10?cfg.jud_tim_10:cfg.jud_tim_5;
-  let ptf = addUtil(proxUtil(parseD(cien)), dias);
+  let ptf = addUtil(proxUtil(parseD(cien)), dias - 1);
   if(fatal && ptf > fatal) ptf = fatal; // nunca ultrapassa o fatal
   return ptf;
 }
@@ -1810,7 +1810,7 @@ window.excluir     = doExcluir;
         </div>
       </div>
       <div class="cfg-sec"><h3>Judicial — Alinhar com TIM</h3>
-        <p class="cfg-desc">Dias úteis após a disponibilização para o prazo TF quando "Alinhar com TIM" está ativo.</p>
+        <p class="cfg-desc">Dias úteis após a ciência para o prazo TF quando "Alinhar com TIM" está ativo.</p>
         <div class="fgrid">
           <div class="fg"><label>5 dias úteis → D+X</label><input type="number" id="cfg-jud-tim-5" min="1"/></div>
           <div class="fg"><label>10 dias úteis → D+X</label><input type="number" id="cfg-jud-tim-10" min="1"/></div>
