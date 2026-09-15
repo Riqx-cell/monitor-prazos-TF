@@ -277,11 +277,16 @@
       </div>
     </div>
   </div>
-  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap">
     <div class="urg-bar" id="urg-bar"></div>
-    <div style="display:flex;gap:4px;padding-bottom:0" id="tipo-bar">
-      <div class="uc tb-jud-btn" id="tb-btn-judicial" onclick="window.toggleTipoFilter('judicial')">⚖️ Judicial</div>
-      <div class="uc tb-adm-btn" id="tb-btn-administrativo" onclick="window.toggleTipoFilter('administrativo')">🏛️ Administrativo</div>
+    <div style="display:flex;gap:8px;align-items:center;padding-bottom:0">
+      <select id="adv-filter" onchange="window.toggleAdvFilter(this.value)" style="display:none;font-size:.76rem;font-weight:700;padding:5px 9px;border-radius:8px;border:none;background:rgba(255,255,255,.12);color:#fff;cursor:pointer">
+        <option value="">Todos os advogados</option>
+      </select>
+      <div style="display:flex;gap:4px" id="tipo-bar">
+        <div class="uc tb-jud-btn" id="tb-btn-judicial" onclick="window.toggleTipoFilter('judicial')">⚖️ Judicial</div>
+        <div class="uc tb-adm-btn" id="tb-btn-administrativo" onclick="window.toggleTipoFilter('administrativo')">🏛️ Administrativo</div>
+      </div>
     </div>
   </div>
 </div>
@@ -400,6 +405,7 @@ let actPautaId   = null;
 let tab          = 'hoje';
 let filterUrg    = null;
 let filterTipo   = null;
+let filterAdv    = null;
 let showArqPauta = false;
 let currentUser  = null;   // Firebase Auth user
 let userProfile  = null;   // { nome, role } from Firestore users/{uid}
@@ -606,11 +612,24 @@ function render() {
     btn.classList.toggle('uc-dim', filterTipo!==null && filterTipo!==t);
   });
 
+  // filtro por advogado (supervisão) — só visível para quem já enxerga todos os processos
+  const canSupervise = isAdmin() || isCoord();
+  const advSelEl = document.getElementById('adv-filter');
+  if (advSelEl) {
+    advSelEl.style.display = canSupervise ? '' : 'none';
+    if (!canSupervise) { filterAdv = null; }
+    const advsUnicos = [...new Set(items.map(i=>(i.adv||'').trim()).filter(Boolean))]
+      .sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    advSelEl.innerHTML = `<option value="">Todos os advogados</option>` +
+      advsUnicos.map(a=>`<option value="${esc(a)}"${filterAdv===a?' selected':''}>${esc(a)}</option>`).join('');
+  }
+
   // aplica filtros
   const applyF = list => {
     let r = list;
     if(filterUrg)  r = r.filter(i=>urgencia(i)===filterUrg);
     if(filterTipo) r = r.filter(i=>(i.tipo||'judicial')===filterTipo);
+    if(filterAdv)  r = r.filter(i=>(i.adv||'').trim()===filterAdv);
     return r;
   };
   const hojeF  = applyF(hoje);
@@ -634,6 +653,10 @@ window.toggleUrgFilter = function(u) {
 };
 window.toggleTipoFilter = function(t) {
   filterTipo = filterTipo===t ? null : t;
+  render();
+};
+window.toggleAdvFilter = function(v) {
+  filterAdv = v || null;
   render();
 };
 
@@ -1473,11 +1496,12 @@ document.getElementById('xlsx-input').addEventListener('change', async function(
         <div class="aud-cand-proc">${esc(c.proc)}</div>
         <div class="aud-cand-caso">${esc(c.caso||'—')}</div>
         <div class="aud-cand-desc">${esc(c.desc||c.prov||'')}</div>
-        <select id="aud-act-${i}">
-          <option value="pauta">📅 Adicionar à Pauta de Audiências</option>
-          <option value="pendente">📋 Criar como Pendente ALERTE</option>
-          <option value="ignorar">🚫 Ignorar</option>
-        </select>
+        <div class="fg" style="margin-bottom:10px">
+          <label style="font-size:.68rem;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:.05em">Data do julgamento <span style="font-weight:400;text-transform:none;color:#aaa">(confira — a planilha às vezes traz a data errada)</span></label>
+          <input type="date" id="aud-data-${i}" value="${c.fatal||c.cien||''}" style="padding:7px 10px;border:1.5px solid #d1d5db;border-radius:6px;font-size:.83rem;background:#fff;font-family:inherit"/>
+        </div>
+        <label class="cb-label" style="font-size:.83rem;margin-top:0;display:flex"><input type="checkbox" id="aud-pauta-${i}" checked/> 📅 Adicionar à Pauta de Audiências</label>
+        <label class="cb-label" style="font-size:.83rem;display:flex"><input type="checkbox" id="aud-prazo-${i}"/> 📋 Criar também como Prazo <span style="font-weight:400;color:#999">(p/ opor ou impugnar o julgamento virtual)</span></label>
       </div>`).join('');
     openOverlay('ovl-aud-import');
   }
@@ -1664,34 +1688,41 @@ window.confirmarAudImport = async function() {
   const candidatos = window._pautaCandidatos || [];
   if (!candidatos.length) { closeOverlay('ovl-aud-import'); return; }
   const batchAud = writeBatch(db);
-  let nPauta = 0, nPend = 0;
+  let nPauta = 0, nPrazo = 0;
   for (let i = 0; i < candidatos.length; i++) {
     const c = candidatos[i];
-    const acao = document.getElementById(`aud-act-${i}`)?.value || 'ignorar';
-    if (acao === 'pauta') {
+    // data pode ter sido corrigida manualmente na revisão (a planilha às vezes traz errada)
+    const dataRev  = document.getElementById(`aud-data-${i}`)?.value || c.fatal || null;
+    const addPauta = document.getElementById(`aud-pauta-${i}`)?.checked || false;
+    const addPrazo = document.getElementById(`aud-prazo-${i}`)?.checked || false;
+
+    if (addPauta) {
       batchAud.set(doc(colPautas), {
         proc: c.proc, caso: c.caso,
-        data: c.fatal || null, // data da sessão = fatal quando disponível
+        data: dataRev, // data da sessão, já revisada/corrigida
         hora: '', vara: '', obs: c.desc || c.prov || '',
         status: 'agendada', createdAt: serverTimestamp(),
       });
       nPauta++;
-    } else if (acao === 'pendente') {
+    }
+    if (addPrazo) {
+      // usado quando também é preciso opor/impugnar o julgamento — vai para Pendentes ALERTE
+      // pra revisão completa (fase, duração etc.) igual a qualquer outro prazo importado
       let dur = 'S/P';
-      if (c.fatal && c.cien) {
+      if (dataRev && c.cien) {
         let d = new Date(c.cien+'T00:00:00'), count=0;
-        const f = new Date(c.fatal+'T00:00:00');
+        const f = new Date(dataRev+'T00:00:00');
         while(d<f){d.setDate(d.getDate()+1);if(isUtil(d))count++;}
         dur = count<=6?'5':count<=12?'10':count<=20?'15':count<=35?'30':'S/P';
       }
       batchAud.set(doc(col), {
         proc: c.proc, caso: c.caso, cien: c.cien, desc: c.desc,
         prov: c.prov, adv: c.adv, org: '',
-        prazoTF: null, fatal: c.fatal||null, dur,
+        prazoTF: null, fatal: dataRev||null, dur,
         tipo: 'judicial', alinhaTIM: false,
         status: 'pendente', arqAt: null, createdAt: serverTimestamp(),
       });
-      nPend++;
+      nPrazo++;
     }
   }
   try {
@@ -1700,9 +1731,10 @@ window.confirmarAudImport = async function() {
     window._pautaCandidatos = [];
     let msg = [];
     if (nPauta) msg.push(`${nPauta} audiência(s) adicionada(s) à Pauta`);
-    if (nPend)  msg.push(`${nPend} criado(s) como pendente(s)`);
-    if (msg.length) alert('✅ ' + msg.join(' | '));
+    if (nPrazo) msg.push(`${nPrazo} criado(s) como prazo pendente`);
+    alert(msg.length ? '✅ ' + msg.join(' | ') : 'Nenhuma seleção confirmada — itens ignorados.');
     if (nPauta) window.setTab('pauta');
+    else if (nPrazo) window.setTab('pend');
   } catch(err) { alert('Erro: ' + err.message); }
 };
 
